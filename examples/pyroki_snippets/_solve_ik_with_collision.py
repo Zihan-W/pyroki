@@ -18,8 +18,10 @@ def solve_ik_with_collision(
     coll: pk.collision.RobotCollision,
     world_coll_list: Sequence[pk.collision.CollGeom],
     target_link_name: str,
+    target_elbow_link_name: str,
     target_position: onp.ndarray,
     target_wxyz: onp.ndarray,
+    target_elbow_position: onp.ndarray,
 ) -> onp.ndarray:
     """
     Solves the basic IK problem for a robot.
@@ -35,16 +37,21 @@ def solve_ik_with_collision(
     """
     assert target_position.shape == (3,) and target_wxyz.shape == (4,)
     target_link_idx = robot.links.names.index(target_link_name)
+    target_elbow_idx = robot.links.names.index(target_elbow_link_name)
 
     T_world_targets = jaxlie.SE3(
         jnp.concatenate([jnp.array(target_wxyz), jnp.array(target_position)], axis=-1)
     )
+    target_elbow_position_jax = jnp.array(target_elbow_position)
+
     cfg = _solve_ik_with_collision_jax(
         robot,
         coll,
         world_coll_list,
         T_world_targets,
+        target_elbow_position_jax,
         jnp.array(target_link_idx),
+        jnp.array(target_elbow_idx),
     )
     assert cfg.shape == (robot.joints.num_actuated_joints,)
 
@@ -57,7 +64,9 @@ def _solve_ik_with_collision_jax(
     coll: pk.collision.RobotCollision,
     world_coll_list: Sequence[pk.collision.CollGeom],
     T_world_target: jaxlie.SE3,
+    target_elbow_position_jax: jax.Array,
     target_link_index: jax.Array,
+    target_elbow_link_index: jax.Array,
 ) -> jax.Array:
     """Solves the basic IK problem with collision avoidance. Returns joint configuration."""
     joint_var = robot.joint_var_cls(0)
@@ -89,6 +98,14 @@ def _solve_ik_with_collision_jax(
             joint_var=joint_var,
             margin=0.02,
             weight=5.0,
+        ),
+        pk.costs.elbow_cost(
+            robot,
+            joint_var,
+            target_elbow_position=target_elbow_position_jax,
+            target_elbow_link_index=target_elbow_link_index,
+            pos_weight=5.0,
+            ori_weight=1.0,
         ),
     ]
     costs.extend(

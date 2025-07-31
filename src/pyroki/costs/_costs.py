@@ -28,6 +28,37 @@ def pose_cost(
     ori_residual = residual[..., 3:] * ori_weight
     return jnp.concatenate([pos_residual, ori_residual]).flatten()
 
+@Cost.create_factory
+def elbow_cost(
+    vals: VarValues,
+    robot: Robot,
+    joint_var: Var[Array],
+    target_elbow_position: Array,
+    target_elbow_rot_quat: Array,  # 四元数 wxyz
+    target_elbow_link_index: Array,
+    pos_weight: Array | float,
+    ori_weight: Array | float,
+) -> Array:
+    joint_cfg = vals[joint_var]
+
+    Ts_link_world = robot.forward_kinematics(joint_cfg)
+    T_elbow = jaxlie.SE3(Ts_link_world[..., target_elbow_link_index, :])
+    elbow_pos_actual = T_elbow.translation()
+
+    # SO3 转四元数，转成 wxyz
+    quat_xyzw = T_elbow.rotation().as_quaternion_xyzw()
+    elbow_rot_actual = quat_xyzw[jnp.array([3, 0, 1, 2])]
+
+    # 位置误差
+    pos_residual = (elbow_pos_actual - target_elbow_position) * pos_weight
+
+    # 旋转误差（四元数距离）
+    dot_product = jnp.sum(elbow_rot_actual * target_elbow_rot_quat)
+    quat_dist = 1.0 - dot_product**2
+    rot_residual = quat_dist * ori_weight
+
+    return jnp.concatenate([pos_residual.flatten(), jnp.array([rot_residual])])
+
 
 @Cost.create_factory
 def pose_cost_with_base(

@@ -21,6 +21,9 @@ def solve_trajopt(
     end_wxyz: ArrayLike,
     timesteps: int,
     dt: float,
+    target_elbow_position: onp.ndarray,
+    target_elbow_rot_quat: onp.ndarray,
+    target_elbow_link_name:str,
 ) -> ArrayLike:
     if isinstance(start_position, onp.ndarray):
         np = onp
@@ -28,6 +31,11 @@ def solve_trajopt(
         np = jnp
     else:
         raise ValueError(f"Invalid type for `ArrayLike`: {type(start_position)}")
+
+    target_elbow_idx = robot.links.names.index(target_elbow_link_name)
+    target_elbow_idx = jnp.array(target_elbow_idx)
+    target_elbow_position_jax = jnp.array(target_elbow_position)
+    target_elbow_rot_quat_jax = jnp.array(target_elbow_rot_quat)
 
     # 1. Solve IK for the start and end poses.
     target_link_index = robot.links.names.index(target_link_name)
@@ -40,6 +48,9 @@ def solve_trajopt(
         target_wxyz_0=jnp.array(start_wxyz),
         target_position_1=jnp.array(end_position),
         target_wxyz_1=jnp.array(end_wxyz),
+        target_elbow_position_jax=jnp.array(target_elbow_position),
+        target_elbow_rot_quat_jax=jnp.array(target_elbow_rot_quat),
+        target_elbow_link_index=jnp.array(target_elbow_idx),
     )
 
     # 2. Initialize the trajectory through linearly interpolating the start and end poses.
@@ -62,6 +73,15 @@ def solve_trajopt(
             robot,
             traj_vars,
             jnp.array([100.0])[None],
+        ),
+        pk.costs.elbow_cost(
+            robot,
+            traj_vars,
+            target_elbow_position=target_elbow_position_jax,
+            target_elbow_rot_quat=target_elbow_rot_quat_jax,
+            target_elbow_link_index=target_elbow_idx,
+            pos_weight=5.0,
+            ori_weight=1.0,
         ),
     ]
 
@@ -177,6 +197,9 @@ def solve_iks_with_collision(
     target_wxyz_0: jax.Array,
     target_position_1: jax.Array,
     target_wxyz_1: jax.Array,
+    target_elbow_position_jax: jax.Array,
+    target_elbow_rot_quat_jax: jax.Array,
+    target_elbow_link_index: jax.Array,
 ) -> tuple[jax.Array, jax.Array]:
     """Solves the basic IK problem with collision avoidance. Returns joint configuration."""
     joint_var_0 = robot.joint_var_cls(0)
@@ -204,7 +227,16 @@ def solve_iks_with_collision(
             ),
             jnp.array(target_link_index),
             jnp.array([5.0] * 3),
-            jnp.array([1.0] * 3),
+            jnp.array([5.0] * 3),
+        ),
+        pk.costs.elbow_cost(
+            robot,
+            joint_var_0,
+            target_elbow_position=target_elbow_position_jax,
+            target_elbow_rot_quat=target_elbow_rot_quat_jax,
+            target_elbow_link_index=target_elbow_link_index,
+            pos_weight=2.0,
+            ori_weight=0.4,
         ),
     ]
     factors.extend(

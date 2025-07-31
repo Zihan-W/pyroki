@@ -16,6 +16,10 @@ def solve_ik(
     target_link_name: str,
     target_wxyz: onp.ndarray,
     target_position: onp.ndarray,
+    target_elbow_position: onp.ndarray,
+    target_elbow_rot_quat: onp.ndarray,
+    target_elbow_link_name:str,
+    init_q: onp.ndarray,
 ) -> onp.ndarray:
     """
     Solves the basic IK problem for a robot.
@@ -31,11 +35,17 @@ def solve_ik(
     """
     assert target_position.shape == (3,) and target_wxyz.shape == (4,)
     target_link_index = robot.links.names.index(target_link_name)
+    target_elbow_idx = robot.links.names.index(target_elbow_link_name)
+    target_elbow_idx = jnp.array(target_elbow_idx)
     cfg = _solve_ik_jax(
         robot,
         jnp.array(target_link_index),
         jnp.array(target_wxyz),
         jnp.array(target_position),
+        target_elbow_position_jax=jnp.array(target_elbow_position),
+        target_elbow_rot_quat_jax=jnp.array(target_elbow_rot_quat),
+        target_elbow_link_index=jnp.array(target_elbow_idx),
+        init_q=jnp.array(init_q),
     )
     assert cfg.shape == (robot.joints.num_actuated_joints,)
     return onp.array(cfg)
@@ -47,6 +57,10 @@ def _solve_ik_jax(
     target_link_index: jax.Array,
     target_wxyz: jax.Array,
     target_position: jax.Array,
+    target_elbow_position_jax: jax.Array,
+    target_elbow_rot_quat_jax: jax.Array,
+    target_elbow_link_index: jax.Array,
+    init_q: jax.Array,
 ) -> jax.Array:
     joint_var = robot.joint_var_cls(0)
     factors = [
@@ -65,6 +79,20 @@ def _solve_ik_jax(
             joint_var,
             weight=100.0,
         ),
+        pk.costs.elbow_cost(
+            robot,
+            joint_var,
+            target_elbow_position=target_elbow_position_jax,
+            target_elbow_rot_quat=target_elbow_rot_quat_jax,
+            target_elbow_link_index=target_elbow_link_index,
+            pos_weight=10.0,
+            ori_weight=2.0,
+        ),
+        pk.costs.smoothness_cost(
+            joint_var,
+            robot.joint_var_cls(init_q),
+            weight=50.0
+        )
     ]
     sol = (
         jaxls.LeastSquaresProblem(factors, [joint_var])
